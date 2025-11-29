@@ -64,20 +64,18 @@ class LibraryImageDir:
         image_dir = Path(image_dir)
         self.grid = image_dir.name == 'grid'
         self._files_cache = {}
-        self._iterdir = image_dir.iterdir()
+        try:
+            for file in image_dir.iterdir():
+                haystack_prefix = file.name.split(".", 1)[0]
+                self._files_cache[haystack_prefix] = file
+        except FileNotFoundError:
+            pass
 
     def get_image(self, id: str, type: str, sep='_') -> Optional[Path]:
         prefix = f'{id}{sep}{type}'
+        alt_prefix = f'app_{id}{sep}{type}'
         try:
-            if prefix in self._files_cache:
-                return self._files_cache[prefix]
-            else:
-                for file in self._iterdir:
-                    haystack_prefix = file.name.split(".", 1)[0]
-                    self._files_cache[haystack_prefix] = file
-                    if prefix == haystack_prefix:
-                        return file
-                return None
+            return self._files_cache.get(prefix) or self._files_cache.get(alt_prefix)
         except FileNotFoundError:
             return None
 
