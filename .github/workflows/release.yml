@@ -2,8 +2,8 @@ name: "Release-Builder"
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    tags-ignore:
+    branches: [main, icon]
+    tags:
       - "v*"
     paths-ignore:
       - .github/workflows/*
@@ -13,7 +13,7 @@ env:
   PYTHON_VER: "3.10"
 jobs:
   deps:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/icon') || startsWith(github.ref, 'refs/tags/') }}
     name: "Build"
     runs-on: windows-latest
     steps:
@@ -57,5 +57,6 @@ jobs:
           files: "./run.dist/${{github.event.repository.name}}.zip"
           tag_name: "v${{steps.version.outputs.prop}}"
           generate_release_notes: true
+          prerelease: ${{ contains(steps.version.outputs.prop, '-rc') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
