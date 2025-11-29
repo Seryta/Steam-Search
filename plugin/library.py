@@ -4,6 +4,8 @@ from typing import Optional, Union, TYPE_CHECKING
 import webbrowser
 import logging
 from functools import cached_property
+import urllib.request
+import tempfile
 if TYPE_CHECKING:
     from steam import Steam
 
@@ -64,22 +66,23 @@ class LibraryImageDir:
         image_dir = Path(image_dir)
         self.grid = image_dir.name == 'grid'
         self._files_cache = {}
-        self._iterdir = image_dir.iterdir()
+        try:
+            for file in image_dir.iterdir():
+                haystack_prefix = file.name.split(".", 1)[0]
+                self._files_cache[haystack_prefix] = file
+        except FileNotFoundError:
+            pass
 
     def get_image(self, id: str, type: str, sep='_') -> Optional[Path]:
         prefix = f'{id}{sep}{type}'
+        alt_prefix = f'app_{id}{sep}{type}'
         try:
-            if prefix in self._files_cache:
-                return self._files_cache[prefix]
-            else:
-                for file in self._iterdir:
-                    haystack_prefix = file.name.split(".", 1)[0]
-                    self._files_cache[haystack_prefix] = file
-                    if prefix == haystack_prefix:
-                        return file
-                return None
+            for key, file in self._files_cache.items():
+                if key.startswith(prefix) or key.startswith(alt_prefix):
+                    return file
         except FileNotFoundError:
             return None
+        return None
 
 
 class LibraryItem:
@@ -128,21 +131,39 @@ class LibraryItem:
         """
         Return the icon for this library item.
         """
-        return self.get_image('icon') or Path(self.unquoted_path())
+        img = self.get_image('icon')
+        if img:
+            return img
+        cdn = self._fetch_cdn_header()
+        if cdn:
+            return cdn
+        return Path(self.unquoted_path())
 
     @cached_property
     def hero(self) -> Path:
         """
         Return the hero image for this library item.
         """
-        return self.get_image('hero')
+        img = self.get_image('hero')
+        if img:
+            return img
+        cdn = self._fetch_cdn_header()
+        if cdn:
+            return cdn
+        return None
 
     @cached_property
     def logo(self) -> Path:
         """
         Return the logo for this library item.
         """
-        return self.get_image('logo')
+        img = self.get_image('logo')
+        if img:
+            return img
+        cdn = self._fetch_cdn_header()
+        if cdn:
+            return cdn
+        return None
 
     @cached_property
     def poster(self) -> Path:
@@ -157,6 +178,61 @@ class LibraryItem:
         Return the grid image for this library item.
         """
         return self.get_image('', sep='')
+
+    def _is_numeric_appid(self) -> bool:
+        try:
+            int(self.id)
+            return True
+        except Exception:
+            return False
+
+    def _cdn_candidates(self) -> list:
+        return [
+            f"https://steamcdn.cloudflare.steamstatic.com/steam/apps/{self.id}/logo.png",
+            f"https://steamcdn.cloudflare.steamstatic.com/steam/apps/{self.id}/library_600x900.jpg",
+            f"https://steamcdn.cloudflare.steamstatic.com/steam/apps/{self.id}/header.jpg",
+            f"https://steamcdn.cloudflare.steamstatic.com/steam/apps/{self.id}/capsule_616x353.jpg",
+            f"https://steamcdn.cloudflare.steamstatic.com/steam/apps/{self.id}/capsule_184x69.jpg",
+            f"https://steamcdn.cloudflare.steamstatic.com/steam/apps/{self.id}/capsule_120x45.jpg",
+        ]
+
+    def _cdn_cache_dir(self) -> Path:
+        return Path(tempfile.gettempdir()).joinpath("steam-search-cache")
+
+    def _fetch_cdn_header(self) -> Optional[Path]:
+        if not self._is_numeric_appid():
+            return None
+        try:
+            cache_dir = self._cdn_cache_dir()
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            for url in self._cdn_candidates():
+                filename = url.rsplit('/', 1)[1]
+                cached_path = cache_dir.joinpath(f"{self.id}_{filename}")
+                if cached_path.exists() and cached_path.stat().st_size > 0:
+                    return cached_path
+                try:
+                    req = urllib.request.Request(
+                        url,
+                        headers={
+                            "User-Agent": "Steam-Search/9.0 (+https://github.com/Garulf/Steam-Search)",
+                            "Accept": "image/jpeg,image/png;q=0.9,*/*;q=0.8",
+                        },
+                    )
+                    with urllib.request.urlopen(req, timeout=7) as resp:
+                        ct = resp.headers.get("Content-Type", "")
+                        if "image" not in ct:
+                            data = b""
+                        else:
+                            data = resp.read()
+                    if data:
+                        with open(cached_path, "wb") as f:
+                            f.write(data)
+                        return cached_path
+                except Exception:
+                    continue
+        except Exception:
+            return None
+        return None
 
     def generate_id(self) -> str:
         """
